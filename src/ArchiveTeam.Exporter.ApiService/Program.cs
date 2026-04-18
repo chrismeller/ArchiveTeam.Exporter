@@ -12,14 +12,11 @@ builder.Services.AddOpenApi();
 builder.Services.AddHttpClient<ProjectService>(client =>
 {
     client.DefaultRequestHeaders.Add("User-Agent", "ArchiveTeam.Exporter/1.0");
-    client.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate");
 })
 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
 {
-    AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate
+    AutomaticDecompression = DecompressionMethods.All
 });
-
-builder.Services.AddHostedService<ProjectService>();
 
 var app = builder.Build();
 
@@ -31,7 +28,14 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpMetrics();
-app.MapMetrics();
+app.MapGet("/metrics", async (ProjectService projectService, HttpContext context, CancellationToken cancellationToken) =>
+{
+    await projectService.GetProjectGaugesAsync(cancellationToken);
+    var registry = Metrics.DefaultRegistry;
+    var response = context.Response;
+    response.ContentType = PrometheusConstants.TextContentTypeWithVersionAndEncoding;
+    await registry.CollectAndExportAsTextAsync(response.Body, cancellationToken);
+});
 
 app.MapGet("/", () => "ArchiveTeam Exporter API. Navigate to /metrics for Prometheus metrics.");
 

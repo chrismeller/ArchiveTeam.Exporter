@@ -4,5 +4,6 @@ namespace ArchiveTeam.Exporter.ApiService.Services;
 
 public interface IProjectService
 {
-    ArchiveTeamProject[] GetProjects();
+    Task<ArchiveTeamProject[]> FetchProjectsAsync(CancellationToken cancellationToken);
+    Task<ArchiveTeamProject[]> GetProjectGaugesAsync(CancellationToken cancellationToken);
 }
