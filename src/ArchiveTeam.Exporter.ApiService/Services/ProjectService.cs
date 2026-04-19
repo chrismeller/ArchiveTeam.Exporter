@@ -46,7 +46,7 @@ public class ProjectService : IProjectService
                 "Information about ArchiveTeam projects",
                 new GaugeConfiguration
                 {
-                    LabelNames = ["name", "title", "description"]
+                    LabelNames = ["name", "title"]
                 });
 
         _projectTotalItemsGauge = Metrics
@@ -228,10 +228,9 @@ public class ProjectService : IProjectService
         {
             var name = SanitizeLabel(project.Name);
             var title = SanitizeLabel(project.Title);
-            var description = SanitizeLabel(project.Description);
 
             _projectInfoGauge
-                .WithLabels(name, title, description)
+                .WithLabels(name, title)
                 .Set(1);
 
             var stats = await FetchProjectStatsAsync(project.Name, cancellationToken);
