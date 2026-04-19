@@ -8,13 +8,13 @@ public class ProjectStatsResponse
     public string[] Downloaders { get; set; } = [];
 
     [JsonPropertyName("downloader_bytes")]
-    public Dictionary<string, long> DownloaderBytes { get; set; } = new();
+    public Dictionary<string, double> DownloaderBytes { get; set; } = new();
 
     [JsonPropertyName("downloader_count")]
     public Dictionary<string, long> DownloaderCount { get; set; } = new();
 
     [JsonPropertyName("domain_bytes")]
-    public Dictionary<string, long> DomainBytes { get; set; } = new();
+    public Dictionary<string, double> DomainBytes { get; set; } = new();
 
     [JsonPropertyName("total_items_todo")]
     public long TotalItemsTodo { get; set; }
