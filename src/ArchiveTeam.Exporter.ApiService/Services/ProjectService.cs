@@ -15,9 +15,19 @@ public class ProjectService : IProjectService
     private readonly ArchiveTeamOptions _options;
     private readonly ILogger<ProjectService> _logger;
     private readonly Gauge _projectInfoGauge;
+    private readonly Gauge _projectTotalItemsGauge;
+    private readonly Gauge _projectItemsDoneGauge;
+    private readonly Gauge _projectItemsTodoGauge;
+    private readonly Gauge _projectItemsOutGauge;
+    private readonly Gauge _projectUserBytesGauge;
+    private readonly Gauge _projectUserItemsGauge;
     private readonly IMemoryCache _memoryCache;
     private readonly SemaphoreSlim _cacheLock = new(1, 1);
     private const string CacheKey = "whitelisted_projects";
+    private readonly JsonSerializerOptions _jsonSerializerOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower
+    };
 
     public ProjectService(
         HttpClient httpClient,
@@ -37,6 +47,60 @@ public class ProjectService : IProjectService
                 new GaugeConfiguration
                 {
                     LabelNames = ["name", "title", "description"]
+                });
+
+        _projectTotalItemsGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_total_items",
+                "Total items in the project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name"]
+                });
+
+        _projectItemsDoneGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_items_done",
+                "Completed items in the project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name"]
+                });
+
+        _projectItemsTodoGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_items_todo",
+                "Remaining items to do in the project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name"]
+                });
+
+        _projectItemsOutGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_items_out",
+                "Items currently being worked on in the project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name"]
+                });
+
+        _projectUserBytesGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_user_bytes",
+                "Bytes downloaded by user for project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name", "username"]
+                });
+
+        _projectUserItemsGauge = Metrics
+            .CreateGauge(
+                "archiveteam_project_user_items",
+                "Items downloaded by user for project",
+                new GaugeConfiguration
+                {
+                    LabelNames = ["name", "username"]
                 });
     }
 
@@ -107,6 +171,55 @@ public class ProjectService : IProjectService
             .ToArray();
     }
 
+    public async Task<ProjectStatsResponse?> FetchProjectStatsAsync(string projectName, CancellationToken cancellationToken)
+    {
+        var cacheKey = $"stats_{projectName}";
+
+        if (_memoryCache.TryGetValue(cacheKey, out ProjectStatsResponse? cachedStats))
+        {
+            _logger.LogInformation("Cache hit: returning cached stats for project {ProjectName}", projectName);
+            return cachedStats;
+        }
+
+        await _cacheLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_memoryCache.TryGetValue(cacheKey, out cachedStats))
+            {
+                _logger.LogInformation("Cache hit after lock: returning cached stats for project {ProjectName}", projectName);
+                return cachedStats;
+            }
+
+            _logger.LogInformation("Cache miss: fetching stats for project {ProjectName} from API", projectName);
+
+            var statsUrl = $"https://v1.api.tracker.archiveteam.org/{projectName}/stats.json";
+
+            var response = await _httpClient.GetAsync(statsUrl, cancellationToken);
+            response.EnsureSuccessStatusCode();
+
+            var statsResponse = await response.Content.ReadFromJsonAsync<ProjectStatsResponse>(_jsonSerializerOptions, cancellationToken);
+
+            if (statsResponse == null)
+            {
+                _logger.LogWarning("Received null stats response for project {ProjectName}", projectName);
+                return null;
+            }
+
+            var cacheOptions = new MemoryCacheEntryOptions()
+                .SetAbsoluteExpiration(_options.CacheDuration);
+
+            _memoryCache.Set(cacheKey, statsResponse, cacheOptions);
+
+            _logger.LogInformation("Cached stats for project {ProjectName} for {CacheDuration}", projectName, _options.CacheDuration);
+
+            return statsResponse;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+    }
+
     public async Task<ArchiveTeamProject[]> GetProjectGaugesAsync(CancellationToken cancellationToken)
     {
         var projects = await FetchProjectsAsync(cancellationToken);
@@ -120,6 +233,47 @@ public class ProjectService : IProjectService
             _projectInfoGauge
                 .WithLabels(name, title, description)
                 .Set(1);
+
+            var stats = await FetchProjectStatsAsync(project.Name, cancellationToken);
+
+            if (stats == null)
+            {
+                _logger.LogWarning("No stats available for project {ProjectName}", project.Name);
+                continue;
+            }
+
+            _projectTotalItemsGauge
+                .WithLabels(name)
+                .Set(stats.TotalItems);
+
+            _projectItemsDoneGauge
+                .WithLabels(name)
+                .Set(stats.TotalItemsDone);
+
+            _projectItemsTodoGauge
+                .WithLabels(name)
+                .Set(stats.TotalItemsTodo);
+
+            _projectItemsOutGauge
+                .WithLabels(name)
+                .Set(stats.TotalItemsOut);
+
+            if (!string.IsNullOrWhiteSpace(_options.Username))
+            {
+                if (stats.DownloaderBytes.TryGetValue(_options.Username, out var userBytes))
+                {
+                    _projectUserBytesGauge
+                        .WithLabels(name, SanitizeLabel(_options.Username))
+                        .Set(userBytes);
+                }
+
+                if (stats.DownloaderCount.TryGetValue(_options.Username, out var userItems))
+                {
+                    _projectUserItemsGauge
+                        .WithLabels(name, SanitizeLabel(_options.Username))
+                        .Set(userItems);
+                }
+            }
         }
 
         return projects;

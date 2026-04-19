@@ -6,4 +6,5 @@ public interface IProjectService
 {
     Task<ArchiveTeamProject[]> FetchProjectsAsync(CancellationToken cancellationToken);
     Task<ArchiveTeamProject[]> GetProjectGaugesAsync(CancellationToken cancellationToken);
+    Task<ProjectStatsResponse?> FetchProjectStatsAsync(string projectName, CancellationToken cancellationToken);
 }
